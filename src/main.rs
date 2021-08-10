@@ -15,7 +15,7 @@ fn ping() -> &'static str {
 
 #[rocket::main]
 async fn main() {
-    let solana_client = match state::solana_client_from_env() {
+    let solana_client = match state::SolanaClient::from_env() {
         Ok(client) => client,
         Err(e) => panic!("{:?}", e),
     };
