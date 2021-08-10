@@ -20,10 +20,15 @@ async fn main() {
         Err(e) => panic!("{:?}", e),
     };
 
+    println!(
+        "Runing server using keypair with public key: {:?}",
+        solana_client.pubkey
+    );
+
     if let Err(e) = rocket::build()
         .manage(solana_client)
         .mount("/", rocket::routes![ping])
-        .mount("/token", rocket::routes![token::check])
+        .mount("/token", rocket::routes![token::list_tokens])
         .register("/", rocket::catchers![not_found])
         .launch()
         .await
