@@ -28,7 +28,14 @@ async fn main() {
     if let Err(e) = rocket::build()
         .manage(solana_client)
         .mount("/", rocket::routes![ping])
-        .mount("/tokens", rocket::routes![token::list_tokens])
+        .mount(
+            "/tokens",
+            rocket::routes![
+                token::list_tokens,
+                token::create_token,
+                token::transfer_token
+            ],
+        )
         .register("/", rocket::catchers![not_found])
         .launch()
         .await

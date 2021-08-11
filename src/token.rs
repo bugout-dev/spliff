@@ -1,3 +1,4 @@
+use rocket::serde::json::Json;
 use rocket::State;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -10,11 +11,6 @@ use super::state::SolanaClient;
 pub struct TokenBalance {
     token: String,
     pubkey: String,
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-pub struct ListTokensResponse {
-    tokens: Vec<TokenBalance>,
 }
 
 #[rocket::get("/")]
@@ -34,4 +30,26 @@ pub fn list_tokens(solana_client: &State<SolanaClient>) -> String {
     };
 
     return serde_json::json!(accounts).to_string();
+}
+
+#[derive(Deserialize, Debug)]
+pub struct TokenSuply {
+    supply: u64,
+}
+#[rocket::post("/", data = "<token_supply>")]
+pub fn create_token(token_supply: Json<TokenSuply>, solana_client: &State<SolanaClient>) {
+    println!("{:?}", token_supply.into_inner());
+    unimplemented!();
+}
+
+#[derive(Deserialize, Debug)]
+pub struct TokenTransferRequest {
+    token: String,
+    recipient: String,
+    amount: u64,
+}
+#[rocket::post("/transfer", data = "<token_transfer_request>")]
+pub fn transfer_token(token_transfer_request: Json<TokenTransferRequest>) {
+    println!("{:?}", token_transfer_request.into_inner());
+    unimplemented!();
 }

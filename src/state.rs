@@ -36,7 +36,10 @@ impl SolanaClient {
 
         let solana_keypair = match read_keypair_file(solana_keypair_path) {
             Ok(keypair) => keypair,
-            Err(_) => return Err(StateError::SolanaKeypairLoadError),
+            Err(e) => {
+                println!("{:?}", e);
+                return Err(StateError::SolanaKeypairLoadError);
+            }
         };
 
         let solana_pubkey = solana_keypair.pubkey();
