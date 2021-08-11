@@ -21,7 +21,7 @@ async fn main() {
     };
 
     println!(
-        "Runing server using keypair with public key: {:?}",
+        "Running server using keypair with public key: {:?}",
         solana_client.pubkey
     );
 
@@ -33,7 +33,7 @@ async fn main() {
             rocket::routes![
                 token::list_tokens,
                 token::create_token,
-                token::transfer_token
+                // token::transfer_token
             ],
         )
         .register("/", rocket::catchers![not_found])
