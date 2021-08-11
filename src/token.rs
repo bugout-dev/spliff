@@ -1,15 +1,22 @@
+use super::state::SolanaClient;
+use rocket::response::{self, Responder, Response};
 use rocket::serde::json::Json;
 use rocket::State;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use solana_client::rpc_request::TokenAccountsFilter;
 use solana_sdk::{
+    program_pack::Pack,
     pubkey::Pubkey,
     signer::{keypair::Keypair, Signer},
 };
-use spl_token;
 
-use super::state::SolanaClient;
+use spl_token::{
+    self,
+    instruction::*,
+    native_mint,
+    state::{Account, Mint, Multisig},
+};
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct TokenBalance {
@@ -51,10 +58,17 @@ pub fn create_token(token_supply: Json<TokenSuply>, solana_client: &State<Solana
     println!("{:?}", token_supply.into_inner());
     let (token_signer, token) = new_throwaway_signer();
     // Also spl_token::initialize_accaut()
+    let rent_exempt_fee = match solana_client
+        .client
+        .get_minimum_balance_for_rent_exemption(spl_token::state::Mint::LEN)
+    {
+        Ok(fee) => fee,
+        Err(_) => panic!("errror while getting rent exemp fee"),
+    };
     solana_sdk::system_instruction::create_account(
-        from_pubkey: &Pubkey, //fee payer
+        &solana_client.pubkey, //fee payer
         &token,
-        lamports: u64,
+        rent_exempt_fee,
         space: u64,
         &spl_token::id(), //owner
     );
