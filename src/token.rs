@@ -1,7 +1,7 @@
 use super::state::SolanaClient;
 use core::panic;
+use rocket::serde::json::Json;
 use rocket::State;
-use rocket::{form::name::Key, serde::json::Json};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use solana_client::rpc_request::TokenAccountsFilter;
@@ -15,11 +15,7 @@ use spl_associated_token_account::*;
 use std::str::FromStr;
 
 use spl_token::instruction::mint_to_checked;
-use spl_token::{
-    self,
-    instruction::initialize_mint,
-    state::{Account, Mint},
-};
+use spl_token::{self, instruction::initialize_mint, state::Mint};
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct TokenBalance {
@@ -131,6 +127,17 @@ pub fn create_token(
 
     println!("{}", token);
     create_token_account(&solana_client, &token);
+    mint_token(solana_client, &token, &token_signer, &token_supply);
+
+    return format!("Successfully created token");
+}
+
+fn mint_token(
+    solana_client: &SolanaClient,
+    token: &Pubkey,
+    token_signer: &Keypair,
+    token_supply: &TokenSupply,
+) {
     let account = get_associated_token_address(&solana_client.pubkey, &token);
     let mint_amount = spl_token::ui_amount_to_amount(token_supply.supply, token_supply.decimals);
 
@@ -166,14 +173,13 @@ pub fn create_token(
         Ok(signature) => signature.to_string(),
         Err(err) => panic!("Error while minting supply transaction: {:?}", err),
     };
-
-    return format!("{}, {}", tx_signature, tx_signature_for_mint);
 }
 
 fn create_token_account(solana_client: &SolanaClient, token: &Pubkey) {
+    //TODO(yhtiyar):
     //It is good idea to check if account already exists
+    //before trying to create one
     //let account = get_associated_token_address(&solana_client.pubkey, &token);
-    //
 
     let instructions = vec![create_associated_token_account(
         &solana_client.pubkey, //Funding address
