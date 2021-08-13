@@ -1,4 +1,5 @@
 use super::state::SolanaClient;
+use core::panic;
 use rocket::State;
 use rocket::{form::name::Key, serde::json::Json};
 use serde::{Deserialize, Serialize};
@@ -10,12 +11,20 @@ use solana_sdk::{
     signer::{keypair::Keypair, Signer},
     transaction::Transaction,
 };
+use spl_associated_token_account::*;
+use std::str::FromStr;
 
-use spl_token::{self, instruction::initialize_mint, state::Mint};
+use spl_token::instruction::mint_to_checked;
+use spl_token::{
+    self,
+    instruction::initialize_mint,
+    state::{Account, Mint},
+};
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct TokenBalance {
-    token: String,
+    token_accaunt: String,
+    balance: String,
     pubkey: String,
 }
 
@@ -27,9 +36,20 @@ pub fn list_tokens(solana_client: &State<SolanaClient>) -> String {
     ) {
         Ok(results) => results
             .iter()
-            .map(|token_account| TokenBalance {
-                token: token_account.pubkey.to_string(),
-                pubkey: solana_client.pubkey.to_string(),
+            .map(|token_account| -> TokenBalance {
+                let token_pubkey = Pubkey::from_str(&token_account.pubkey[..]).unwrap();
+                let balance = match solana_client
+                    .client
+                    .get_token_account_balance(&token_pubkey)
+                {
+                    Ok(res) => res,
+                    Err(_) => panic!("Couldnt get token balance"),
+                };
+                TokenBalance {
+                    token_accaunt: token_account.pubkey.to_string(),
+                    balance: balance.amount,
+                    pubkey: solana_client.pubkey.to_string(),
+                }
             })
             .collect(),
         Err(_) => vec![],
@@ -46,7 +66,7 @@ fn new_throwaway_signer() -> (Keypair, Pubkey) {
 
 #[derive(Deserialize, Debug)]
 pub struct TokenSupply {
-    supply: u64,
+    supply: f64,
     decimals: u8,
 }
 #[rocket::post("/", data = "<token_supply_json>")]
@@ -103,10 +123,86 @@ pub fn create_token(
         .send_and_confirm_transaction(&create_token_transaction)
     {
         Ok(signature) => signature.to_string(),
-        Err(_) => panic!("Error submitting transaction to Solana blockchain"),
+        Err(err) => panic!(
+            "Error submitting transaction to Solana blockchain: {:?}",
+            err
+        ),
     };
 
-    return tx_signature;
+    println!("{}", token);
+    create_token_account(&solana_client, &token);
+    let account = get_associated_token_address(&solana_client.pubkey, &token);
+    let mint_amount = spl_token::ui_amount_to_amount(token_supply.supply, token_supply.decimals);
+
+    let mint_supply_instruction = match mint_to_checked(
+        &spl_token::id(),
+        &token,
+        &account,
+        &solana_client.pubkey,
+        &vec![&solana_client.pubkey, &token],
+        mint_amount,
+        token_supply.decimals,
+    ) {
+        Ok(res) => res,
+        Err(err) => panic!("Error while minting: {:?}", err),
+    };
+
+    let (recent_blockhash, _fee_calculator) = match solana_client.client.get_recent_blockhash() {
+        Ok(result) => result,
+        Err(_) => panic!("Could not get recent blockhash from Solana API"),
+    };
+
+    let mint_supply_transaction = Transaction::new_signed_with_payer(
+        &vec![mint_supply_instruction],
+        Some(&solana_client.pubkey),
+        &vec![&solana_client.keypair, &token_signer],
+        recent_blockhash,
+    );
+
+    let tx_signature_for_mint = match solana_client
+        .client
+        .send_and_confirm_transaction(&mint_supply_transaction)
+    {
+        Ok(signature) => signature.to_string(),
+        Err(err) => panic!("Error while minting supply transaction: {:?}", err),
+    };
+
+    return format!("{}, {}", tx_signature, tx_signature_for_mint);
+}
+
+fn create_token_account(solana_client: &SolanaClient, token: &Pubkey) {
+    //It is good idea to check if account already exists
+    //let account = get_associated_token_address(&solana_client.pubkey, &token);
+    //
+
+    let instructions = vec![create_associated_token_account(
+        &solana_client.pubkey, //Funding address
+        &solana_client.pubkey, //Wallet address
+        &token,
+    )];
+
+    let (recent_blockhash, _fee_calculator) = match solana_client.client.get_recent_blockhash() {
+        Ok(result) => result,
+        Err(_) => panic!("Could not get recent blockhash from Solana API"),
+    };
+
+    let create_token_account_transaction = Transaction::new_signed_with_payer(
+        &instructions,
+        Some(&solana_client.pubkey),
+        &vec![&solana_client.keypair],
+        recent_blockhash,
+    );
+
+    let tx_signature = match solana_client
+        .client
+        .send_and_confirm_transaction(&create_token_account_transaction)
+    {
+        Ok(signature) => signature.to_string(),
+        Err(err) => panic!(
+            "Error submitting create token accaunt transaction to Solana blockchain: {:?}",
+            err
+        ),
+    };
 }
 
 // #[derive(Deserialize, Debug)]
