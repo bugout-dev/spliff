@@ -15,15 +15,17 @@ use solana_sdk::{
 use spl_associated_token_account::*;
 use spl_token::instruction::mint_to_checked;
 use spl_token::{self, instruction::initialize_mint, state::Mint};
+use std::str::FromStr;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct TokenBalance {
     token_address: String,
     token_accaunt: String,
     balance: String,
+    pubkey: String,
 }
 
-fn parse_account(account: &RpcKeyedAccount) -> TokenBalance {
+fn parse_account(account: &RpcKeyedAccount, owner: &Pubkey) -> TokenBalance {
     if let UiAccountData::Json(parsed_account) = account.account.data.clone() {
         match serde_json::from_value(parsed_account.parsed) {
             Ok(TokenAccountType::Account(ui_token_account)) => {
@@ -32,6 +34,7 @@ fn parse_account(account: &RpcKeyedAccount) -> TokenBalance {
                     token_address: mint,
                     token_accaunt: account.pubkey.clone(),
                     balance: ui_token_account.token_amount.real_number_string(),
+                    pubkey: owner.to_string(),
                 };
             }
             Ok(_) => panic!("unsupported account type"),
@@ -50,7 +53,9 @@ pub fn list_tokens(solana_client: &State<SolanaClient>) -> String {
     ) {
         Ok(results) => results
             .iter()
-            .map(|token_account| -> TokenBalance { parse_account(token_account) })
+            .map(|token_account| -> TokenBalance {
+                parse_account(token_account, &solana_client.pubkey)
+            })
             .collect(),
         Err(_) => vec![],
     };
@@ -214,32 +219,66 @@ fn create_token_account(solana_client: &SolanaClient, token: &Pubkey) {
     };
 }
 
-// #[derive(Deserialize, Debug)]
-// pub struct TokenTransferRequest {
-//     token: String,
-//     recipient: String,
-//     amount: u64,
-// }
-// #[rocket::post("/transfer", data = "<token_transfer_request_json>")]
-// pub fn transfer_token(
-//     token_transfer_request_json: Json<TokenTransferRequest>,
-//     solana_client: &State<SolanaClient>,
-// ) {
-//     println!("{:?}", token_transfer_request_json.into_inner());
+#[derive(Deserialize, Debug)]
+pub struct TokenTransferRequest {
+    token: String,
+    recipient: String,
+    amount: u64,
+}
 
-//     let token_transfer_request = token_transfer_request_json.into_inner();
-//     let token = Pubkey::new(token_transfer_request.token.as_bytes());
-//     let destination = Pubkey::new(token_transfer_request.recipient.as_bytes());
+#[rocket::post("/transfer", data = "<token_transfer_request_json>")]
+//TODO(yhtiyar):
+//This is working, but recipient must create account, needed to check and
+//crete account for token if needed
+pub fn transfer_token(
+    token_transfer_request_json: Json<TokenTransferRequest>,
+    solana_client: &State<SolanaClient>,
+) {
+    let token_transfer_request = token_transfer_request_json.into_inner();
+    let token = match Pubkey::from_str(&token_transfer_request.token) {
+        Ok(pubkey) => pubkey,
+        Err(err) => panic!("Failed to parse token: {:?}", err),
+    };
+    let recipient = match Pubkey::from_str(&token_transfer_request.recipient) {
+        Ok(pubkey) => pubkey,
+        Err(err) => panic!("Failed to parse recepient: {:?}", err),
+    };
 
-//     //solana_sdk::system_instruction::transfer(from_pubkey: &Pubkey, to_pubkey: &Pubkey, lamports: u64)
+    let account_from = get_associated_token_address(&solana_client.pubkey, &token);
+    let account_to = get_associated_token_address(&recipient, &token);
+    println!("{}\n{}", account_from, account_to);
+    let token_transfer_instruction = match spl_token::instruction::transfer(
+        &spl_token::id(), //Token program id
+        &account_from,    //source_pubkey
+        &account_to,      //Destination pubkey
+        &solana_client.pubkey,
+        &vec![&solana_client.pubkey],
+        token_transfer_request.amount, //amount
+    ) {
+        Ok(instruction) => instruction,
+        Err(err) => panic!("{:?}", err),
+    };
 
-//     spl_token::instruction::transfer(
-//         &token,                //Token program id
-//         &solana_client.pubkey, //source_pubkey
-//         &destination,          //Destination pubkey
-//         authority_pubkey: &Pubkey,
-//         signer_pubkeys: &[&Pubkey],
-//         token_transfer_request.amount, //amount
-//     );
-//     unimplemented!();
-// }
+    let (recent_blockhash, _fee_calculator) = match solana_client.client.get_recent_blockhash() {
+        Ok(result) => result,
+        Err(_) => panic!("Could not get recent blockhash from Solana API"),
+    };
+
+    let token_transfer_transaction = Transaction::new_signed_with_payer(
+        &vec![token_transfer_instruction],
+        Some(&solana_client.pubkey),
+        &vec![&solana_client.keypair],
+        recent_blockhash,
+    );
+
+    let tx_signature = match solana_client
+        .client
+        .send_and_confirm_transaction(&token_transfer_transaction)
+    {
+        Ok(signature) => signature.to_string(),
+        Err(err) => panic!(
+            "Error submitting create token accaunt transaction to Solana blockchain: {:?}",
+            err
+        ),
+    };
+}
