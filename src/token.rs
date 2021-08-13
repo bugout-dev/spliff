@@ -4,7 +4,8 @@ use rocket::serde::json::Json;
 use rocket::State;
 use serde::{Deserialize, Serialize};
 use serde_json;
-use solana_client::rpc_request::TokenAccountsFilter;
+use solana_account_decoder::{parse_token::TokenAccountType, UiAccountData};
+use solana_client::{rpc_request::TokenAccountsFilter, rpc_response::RpcKeyedAccount};
 use solana_sdk::{
     program_pack::Pack,
     pubkey::Pubkey,
@@ -12,16 +13,33 @@ use solana_sdk::{
     transaction::Transaction,
 };
 use spl_associated_token_account::*;
-use std::str::FromStr;
-
 use spl_token::instruction::mint_to_checked;
 use spl_token::{self, instruction::initialize_mint, state::Mint};
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct TokenBalance {
+    token_address: String,
     token_accaunt: String,
     balance: String,
-    pubkey: String,
+}
+
+fn parse_account(account: &RpcKeyedAccount) -> TokenBalance {
+    if let UiAccountData::Json(parsed_account) = account.account.data.clone() {
+        match serde_json::from_value(parsed_account.parsed) {
+            Ok(TokenAccountType::Account(ui_token_account)) => {
+                let mint = ui_token_account.mint.clone();
+                return TokenBalance {
+                    token_address: mint,
+                    token_accaunt: account.pubkey.clone(),
+                    balance: ui_token_account.token_amount.real_number_string(),
+                };
+            }
+            Ok(_) => panic!("unsupported account type"),
+            Err(err) => panic!("Error while parsing account {:?}", err),
+        }
+    } else {
+        panic!("Failed to parse account")
+    }
 }
 
 #[rocket::get("/")]
@@ -32,21 +50,7 @@ pub fn list_tokens(solana_client: &State<SolanaClient>) -> String {
     ) {
         Ok(results) => results
             .iter()
-            .map(|token_account| -> TokenBalance {
-                let token_pubkey = Pubkey::from_str(&token_account.pubkey[..]).unwrap();
-                let balance = match solana_client
-                    .client
-                    .get_token_account_balance(&token_pubkey)
-                {
-                    Ok(res) => res,
-                    Err(_) => panic!("Couldnt get token balance"),
-                };
-                TokenBalance {
-                    token_accaunt: token_account.pubkey.to_string(),
-                    balance: balance.amount,
-                    pubkey: solana_client.pubkey.to_string(),
-                }
-            })
+            .map(|token_account| -> TokenBalance { parse_account(token_account) })
             .collect(),
         Err(_) => vec![],
     };
@@ -72,7 +76,6 @@ pub fn create_token(
 ) -> String {
     let token_supply = token_supply_json.into_inner();
     let (token_signer, token) = new_throwaway_signer();
-    // Also spl_token::initialize_accaut()
     let rent_exempt_fee = match solana_client
         .client
         .get_minimum_balance_for_rent_exemption(spl_token::state::Mint::LEN)
