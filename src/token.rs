@@ -19,7 +19,7 @@ use spl_token::{self, instruction::initialize_mint, state::Mint};
 #[derive(Deserialize, Serialize, Debug)]
 pub struct TokenBalance {
     token_address: String,
-    token_accaunt: String,
+    token_account: String,
     balance: String,
 }
 
@@ -30,7 +30,7 @@ fn parse_account(account: &RpcKeyedAccount) -> TokenBalance {
                 let mint = ui_token_account.mint.clone();
                 return TokenBalance {
                     token_address: mint,
-                    token_accaunt: account.pubkey.clone(),
+                    token_account: account.pubkey.clone(),
                     balance: ui_token_account.token_amount.real_number_string(),
                 };
             }
@@ -208,7 +208,7 @@ fn create_token_account(solana_client: &SolanaClient, token: &Pubkey) {
     {
         Ok(signature) => signature.to_string(),
         Err(err) => panic!(
-            "Error submitting create token accaunt transaction to Solana blockchain: {:?}",
+            "Error submitting create token account transaction to Solana blockchain: {:?}",
             err
         ),
     };
