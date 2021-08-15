@@ -1,5 +1,6 @@
 use super::state::SolanaClient;
 use core::panic;
+use rocket::http::Status;
 use rocket::serde::json::Json;
 use rocket::State;
 use serde::{Deserialize, Serialize};
@@ -15,8 +16,9 @@ use solana_sdk::{
 use spl_associated_token_account::*;
 use spl_token::instruction::mint_to_checked;
 use spl_token::{self, instruction::initialize_mint, state::Mint};
+use std::str::FromStr;
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct TokenBalance {
     token_address: String,
     token_account: String,
@@ -43,19 +45,16 @@ fn parse_account(account: &RpcKeyedAccount) -> TokenBalance {
 }
 
 #[rocket::get("/")]
-pub fn list_tokens(solana_client: &State<SolanaClient>) -> String {
+pub fn list_tokens(solana_client: &State<SolanaClient>) -> Result<Json<Vec<TokenBalance>>, Status> {
     let accounts: Vec<TokenBalance> = match solana_client.client.get_token_accounts_by_owner(
         &solana_client.pubkey,
         TokenAccountsFilter::ProgramId(spl_token::id()),
     ) {
-        Ok(results) => results
-            .iter()
-            .map(|token_account| -> TokenBalance { parse_account(token_account) })
-            .collect(),
-        Err(_) => vec![],
+        Ok(results) => results.iter().map(parse_account).collect(),
+        Err(_) => return Err(Status::InternalServerError),
     };
 
-    return serde_json::json!(accounts).to_string();
+    return Ok(Json(accounts));
 }
 
 fn new_throwaway_signer() -> (Keypair, Pubkey) {
@@ -69,11 +68,20 @@ pub struct TokenSupply {
     supply: f64,
     decimals: u8,
 }
+
+#[derive(Serialize, Debug)]
+pub struct CreateTokenResponse {
+    token: String,
+    token_account: String,
+    balance: String,
+    transaction: String,
+}
+
 #[rocket::post("/", data = "<token_supply_json>")]
 pub fn create_token(
     token_supply_json: Json<TokenSupply>,
     solana_client: &State<SolanaClient>,
-) -> String {
+) -> Result<Json<CreateTokenResponse>, Status> {
     let token_supply = token_supply_json.into_inner();
     let (token_signer, token) = new_throwaway_signer();
     let rent_exempt_fee = match solana_client
@@ -84,7 +92,7 @@ pub fn create_token(
         Err(_) => panic!("errror while getting rent exemp fee"),
     };
 
-    let create_token_account_instruction = solana_sdk::system_instruction::create_account(
+    let create_token_instruction = solana_sdk::system_instruction::create_account(
         &solana_client.pubkey, //fee payer
         &token,
         rent_exempt_fee,
@@ -92,7 +100,7 @@ pub fn create_token(
         &spl_token::id(), //owner
     );
 
-    let mint_token_instruction = match initialize_mint(
+    let initialize_mint_instruction = match initialize_mint(
         &spl_token::id(),
         &token,
         &solana_client.pubkey,
@@ -100,17 +108,44 @@ pub fn create_token(
         token_supply.decimals,
     ) {
         Ok(instruction) => instruction,
-        Err(_) => panic!("Error creating mint instruction"),
+        Err(_) => return Err(Status::BadRequest),
     };
 
-    let instructions = vec![create_token_account_instruction, mint_token_instruction];
+    let create_token_account_instruction = create_associated_token_account(
+        &solana_client.pubkey, //Funding address
+        &solana_client.pubkey, //Wallet address
+        &token,
+    );
+
+    let token_account = get_associated_token_address(&solana_client.pubkey, &token);
+    let mint_amount = spl_token::ui_amount_to_amount(token_supply.supply, token_supply.decimals);
+
+    let mint_supply_instruction = match mint_to_checked(
+        &spl_token::id(),
+        &token,
+        &token_account,
+        &solana_client.pubkey,
+        &vec![&solana_client.pubkey, &token],
+        mint_amount,
+        token_supply.decimals,
+    ) {
+        Ok(res) => res,
+        Err(_) => return Err(Status::BadRequest),
+    };
+
+    let instructions = vec![
+        create_token_instruction,
+        initialize_mint_instruction,
+        create_token_account_instruction,
+        mint_supply_instruction,
+    ];
 
     let (recent_blockhash, _fee_calculator) = match solana_client.client.get_recent_blockhash() {
         Ok(result) => result,
-        Err(_) => panic!("Could not get recent blockhash from Solana API"),
+        Err(_) => return Err(Status::BadRequest),
     };
 
-    let create_token_transaction = Transaction::new_signed_with_payer(
+    let init_token_transaction = Transaction::new_signed_with_payer(
         &instructions,
         Some(&solana_client.pubkey),
         &vec![&solana_client.keypair, &token_signer],
@@ -119,84 +154,75 @@ pub fn create_token(
 
     let tx_signature = match solana_client
         .client
-        .send_and_confirm_transaction(&create_token_transaction)
+        .send_and_confirm_transaction(&init_token_transaction)
     {
         Ok(signature) => signature.to_string(),
-        Err(err) => panic!(
-            "Error submitting transaction to Solana blockchain: {:?}",
-            err
-        ),
+        Err(_) => return Err(Status::InternalServerError),
     };
 
-    println!("{}", token);
-    create_token_account(&solana_client, &token);
-    mint_token(solana_client, &token, &token_signer, &token_supply);
-
-    return format!("Successfully created token");
+    return Ok(Json(CreateTokenResponse {
+        token: token.to_string(),
+        token_account: token_account.to_string(),
+        balance: mint_amount.to_string(),
+        transaction: tx_signature,
+    }));
 }
 
-fn mint_token(
-    solana_client: &SolanaClient,
-    token: &Pubkey,
-    token_signer: &Keypair,
-    token_supply: &TokenSupply,
-) {
-    let account = get_associated_token_address(&solana_client.pubkey, &token);
-    let mint_amount = spl_token::ui_amount_to_amount(token_supply.supply, token_supply.decimals);
+#[derive(Deserialize, Debug)]
+pub struct TokenTransferRequest {
+    token: String,
+    to_pubkey: String, // Expected to be a token account.
+    amount: u64,
+}
 
-    let mint_supply_instruction = match mint_to_checked(
+#[derive(Serialize, Debug)]
+pub struct TokenTransferResponse {
+    token: String,
+    to_pubkey: String,
+    amount: u64,
+    transaction: String,
+}
+
+#[rocket::post("/transfer", data = "<token_transfer_request_json>")]
+pub fn transfer_token(
+    token_transfer_request_json: Json<TokenTransferRequest>,
+    solana_client: &State<SolanaClient>,
+) -> Result<Json<TokenTransferResponse>, Status> {
+    let token_transfer_request = token_transfer_request_json.into_inner();
+    let token_pubkey = match Pubkey::from_str(&token_transfer_request.token) {
+        Ok(pubkey) => pubkey,
+        Err(_) => return Err(Status::BadRequest),
+    };
+    let to_pubkey = match Pubkey::from_str(&token_transfer_request.to_pubkey) {
+        Ok(pubkey) => pubkey,
+        Err(_) => return Err(Status::BadRequest),
+    };
+
+    //solana_sdk::system_instruction::transfer(from_pubkey: &Pubkey, to_pubkey: &Pubkey, lamports: u64)
+
+    let source_pubkey = get_associated_token_address(&solana_client.pubkey, &token_pubkey);
+
+    let transfer_instruction = match spl_token::instruction::transfer_checked(
         &spl_token::id(),
-        &token,
-        &account,
+        &source_pubkey,
+        &token_pubkey,
+        &to_pubkey,
         &solana_client.pubkey,
-        &vec![&solana_client.pubkey, &token],
-        mint_amount,
-        token_supply.decimals,
+        &vec![&solana_client.pubkey],
+        token_transfer_request.amount,
+        0,
     ) {
-        Ok(res) => res,
-        Err(err) => panic!("Error while minting: {:?}", err),
+        Ok(instruction) => instruction,
+        Err(_) => return Err(Status::BadRequest),
     };
 
     let (recent_blockhash, _fee_calculator) = match solana_client.client.get_recent_blockhash() {
         Ok(result) => result,
-        Err(_) => panic!("Could not get recent blockhash from Solana API"),
+        Err(_) => return Err(Status::BadRequest),
     };
 
-    let mint_supply_transaction = Transaction::new_signed_with_payer(
-        &vec![mint_supply_instruction],
-        Some(&solana_client.pubkey),
-        &vec![&solana_client.keypair, &token_signer],
-        recent_blockhash,
-    );
-
-    let tx_signature_for_mint = match solana_client
-        .client
-        .send_and_confirm_transaction(&mint_supply_transaction)
-    {
-        Ok(signature) => signature.to_string(),
-        Err(err) => panic!("Error while minting supply transaction: {:?}", err),
-    };
-}
-
-fn create_token_account(solana_client: &SolanaClient, token: &Pubkey) {
-    //TODO(yhtiyar):
-    //It is good idea to check if account already exists
-    //before trying to create one
-    //let account = get_associated_token_address(&solana_client.pubkey, &token);
-
-    let instructions = vec![create_associated_token_account(
-        &solana_client.pubkey, //Funding address
-        &solana_client.pubkey, //Wallet address
-        &token,
-    )];
-
-    let (recent_blockhash, _fee_calculator) = match solana_client.client.get_recent_blockhash() {
-        Ok(result) => result,
-        Err(_) => panic!("Could not get recent blockhash from Solana API"),
-    };
-
-    let create_token_account_transaction = Transaction::new_signed_with_payer(
-        &instructions,
+    let transfer_transaction = Transaction::new_signed_with_payer(
+        &vec![transfer_instruction],
         Some(&solana_client.pubkey),
         &vec![&solana_client.keypair],
         recent_blockhash,
@@ -204,42 +230,16 @@ fn create_token_account(solana_client: &SolanaClient, token: &Pubkey) {
 
     let tx_signature = match solana_client
         .client
-        .send_and_confirm_transaction(&create_token_account_transaction)
+        .send_and_confirm_transaction(&transfer_transaction)
     {
         Ok(signature) => signature.to_string(),
-        Err(err) => panic!(
-            "Error submitting create token account transaction to Solana blockchain: {:?}",
-            err
-        ),
+        Err(_) => return Err(Status::InternalServerError),
     };
+
+    return Ok(Json(TokenTransferResponse {
+        token: token_transfer_request.token,
+        to_pubkey: token_transfer_request.to_pubkey,
+        amount: token_transfer_request.amount,
+        transaction: tx_signature,
+    }));
 }
-
-// #[derive(Deserialize, Debug)]
-// pub struct TokenTransferRequest {
-//     token: String,
-//     recipient: String,
-//     amount: u64,
-// }
-// #[rocket::post("/transfer", data = "<token_transfer_request_json>")]
-// pub fn transfer_token(
-//     token_transfer_request_json: Json<TokenTransferRequest>,
-//     solana_client: &State<SolanaClient>,
-// ) {
-//     println!("{:?}", token_transfer_request_json.into_inner());
-
-//     let token_transfer_request = token_transfer_request_json.into_inner();
-//     let token = Pubkey::new(token_transfer_request.token.as_bytes());
-//     let destination = Pubkey::new(token_transfer_request.recipient.as_bytes());
-
-//     //solana_sdk::system_instruction::transfer(from_pubkey: &Pubkey, to_pubkey: &Pubkey, lamports: u64)
-
-//     spl_token::instruction::transfer(
-//         &token,                //Token program id
-//         &solana_client.pubkey, //source_pubkey
-//         &destination,          //Destination pubkey
-//         authority_pubkey: &Pubkey,
-//         signer_pubkeys: &[&Pubkey],
-//         token_transfer_request.amount, //amount
-//     );
-//     unimplemented!();
-// }
