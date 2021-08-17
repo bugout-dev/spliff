@@ -9,9 +9,9 @@ use solana_sdk::signer::{
 
 #[derive(Debug)]
 pub enum StateError {
-    SolanaMissingAPIUrl,
-    SolanaMissingKeypairPath,
-    SolanaKeypairLoadError,
+    SolanaMissingAPIUrl(&'static str),
+    SolanaMissingKeypairPath(&'static str),
+    SolanaKeypairLoadError(&'static str),
 }
 
 pub struct SolanaClient {
@@ -24,21 +24,30 @@ impl SolanaClient {
     pub fn from_env() -> Result<SolanaClient, StateError> {
         let solana_api_url = match var("SPLIFF_SOLANA_API_URL") {
             Ok(api_url) => api_url,
-            Err(_) => return Err(StateError::SolanaMissingAPIUrl),
+            Err(_) => {
+                return Err(StateError::SolanaMissingAPIUrl(
+                    "SPLIFF_SOLANA_API_URL environment variable not setted",
+                ))
+            }
         };
 
         let rpc_client = RpcClient::new(solana_api_url);
 
         let solana_keypair_path = match var("SPLIFF_SOLANA_KEYPAIR_PATH") {
             Ok(keypair_path) => keypair_path,
-            Err(_) => return Err(StateError::SolanaMissingKeypairPath),
+            Err(_) => {
+                return Err(StateError::SolanaMissingKeypairPath(
+                    "SPLIFF_SOLANA_KEYPAIR_PATH environment variable not setted",
+                ))
+            }
         };
 
         let solana_keypair = match read_keypair_file(solana_keypair_path) {
             Ok(keypair) => keypair,
-            Err(e) => {
-                println!("{:?}", e);
-                return Err(StateError::SolanaKeypairLoadError);
+            Err(_) => {
+                return Err(StateError::SolanaKeypairLoadError(
+                    "Failed to load keypair from path SPLIFF_SOLANA_KEYPAIR_PATH",
+                ));
             }
         };
 

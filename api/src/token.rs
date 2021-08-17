@@ -304,7 +304,7 @@ pub fn transfer_token(
             ));
         }
     }
-    let recipient_account = get_associated_token_address(&solana_client.pubkey, &token_pubkey);
+    let recipient_account = get_associated_token_address(&recipient_pubkey, &token_pubkey);
     // let transfer_instruction = match spl_token::instruction::transfer_checked(
     //     &spl_token::id(),
     //     &source_pubkey,

@@ -17,7 +17,7 @@ fn ping() -> &'static str {
 async fn main() {
     let solana_client = match state::SolanaClient::from_env() {
         Ok(client) => client,
-        Err(e) => panic!("{:?}", e),
+        Err(e) => panic!("Error while initializing solana client: {:?}", e),
     };
 
     println!(
