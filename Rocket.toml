@@ -1,8 +1,0 @@
-[default]
-address = "127.0.0.1"
-port = 4222
-workers = 1
-
-[default.limits]
-forms = "1 MiB"
-json = "1 MiB"
