@@ -26,7 +26,7 @@ impl SolanaClient {
             Ok(api_url) => api_url,
             Err(_) => {
                 return Err(StateError::SolanaMissingAPIUrl(
-                    "SPLIFF_SOLANA_API_URL environment variable not setted",
+                    "SPLIFF_SOLANA_API_URL environment variable not set",
                 ))
             }
         };
@@ -37,7 +37,7 @@ impl SolanaClient {
             Ok(keypair_path) => keypair_path,
             Err(_) => {
                 return Err(StateError::SolanaMissingKeypairPath(
-                    "SPLIFF_SOLANA_KEYPAIR_PATH environment variable not setted",
+                    "SPLIFF_SOLANA_KEYPAIR_PATH environment variable not set",
                 ))
             }
         };
