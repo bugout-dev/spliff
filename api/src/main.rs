@@ -1,8 +1,7 @@
 use rocket;
 
-mod state;
 mod token;
-
+use spliff_lib::{self, state::SolanaClient};
 #[rocket::catch(404)]
 fn not_found(req: &rocket::Request) -> String {
     format!("Invalid path: {}", req.uri())
@@ -15,7 +14,9 @@ fn ping() -> &'static str {
 
 #[rocket::main]
 async fn main() {
-    let solana_client = match state::SolanaClient::from_env() {
+    println!("{:?}", spliff_lib::hello());
+
+    let solana_client = match SolanaClient::from_env() {
         Ok(client) => client,
         Err(e) => panic!("Error while initializing solana client: {:?}", e),
     };

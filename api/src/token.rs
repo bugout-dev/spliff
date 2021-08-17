@@ -1,13 +1,7 @@
-use super::state::SolanaClient;
-use core::panic;
 use rocket::http::Status;
 use rocket::serde::json::Json;
 use rocket::State;
 use serde::{Deserialize, Serialize};
-use serde_json;
-use solana_account_decoder::{parse_token::TokenAccountType, UiAccountData};
-use solana_client::{rpc_request::TokenAccountsFilter, rpc_response::RpcKeyedAccount};
-use solana_sdk::system_program;
 use solana_sdk::{
     program_pack::Pack,
     pubkey::Pubkey,
@@ -15,69 +9,33 @@ use solana_sdk::{
     transaction::Transaction,
 };
 use spl_associated_token_account::*;
-use spl_token::instruction::mint_to_checked;
-use spl_token::{self, instruction::initialize_mint, state::Mint};
+use spl_token::{
+    self,
+    instruction::{initialize_mint, mint_to_checked},
+    state::Mint,
+};
+use spliff_lib::{
+    account::{self, has_token_account, TokenBalance},
+    state::SolanaClient,
+    token::TokenSupply,
+};
 use std::str::FromStr;
-
-#[derive(Serialize, Debug)]
-pub struct TokenBalance {
-    token_address: String,
-    token_account: String,
-    balance: String,
-    owner_pubkey: String,
-}
-
-fn parse_account(account: &RpcKeyedAccount, owner: &Pubkey) -> TokenBalance {
-    if let UiAccountData::Json(parsed_account) = account.account.data.clone() {
-        match serde_json::from_value(parsed_account.parsed) {
-            Ok(TokenAccountType::Account(ui_token_account)) => {
-                let mint = ui_token_account.mint.clone();
-                return TokenBalance {
-                    token_address: mint,
-                    token_account: account.pubkey.clone(),
-                    balance: ui_token_account.token_amount.real_number_string(),
-                    owner_pubkey: owner.to_string(),
-                };
-            }
-            Ok(_) => panic!("unsupported account type"),
-            Err(err) => panic!("Error while parsing account {:?}", err),
-        }
-    } else {
-        panic!("Failed to parse account")
-    }
-}
 
 #[rocket::get("/")]
 pub fn list_tokens(solana_client: &State<SolanaClient>) -> Result<Json<Vec<TokenBalance>>, Status> {
-    let accounts: Vec<TokenBalance> = match solana_client.client.get_token_accounts_by_owner(
-        &solana_client.pubkey,
-        TokenAccountsFilter::ProgramId(spl_token::id()),
-    ) {
-        Ok(results) => results
-            .iter()
-            .map(|token_account| -> TokenBalance {
-                parse_account(token_account, &solana_client.pubkey)
-            })
-            .collect(),
+    return match account::list_tokens(&solana_client) {
+        Ok(results) => Ok(Json(results)),
         Err(err) => {
-            println!("{:?}", err);
+            println!("Failed to list tokens: {:?}", err);
             return Err(Status::InternalServerError);
         }
     };
-
-    return Ok(Json(accounts));
 }
 
 fn new_throwaway_signer() -> (Keypair, Pubkey) {
     let keypair = Keypair::new();
     let pubkey = keypair.pubkey();
     (keypair, pubkey)
-}
-
-#[derive(Deserialize, Debug)]
-pub struct TokenSupply {
-    supply: f64,
-    decimals: u8,
 }
 
 #[derive(Serialize, Debug)]
@@ -207,27 +165,6 @@ pub fn create_token(
         balance: mint_amount.to_string(),
         transaction: tx_signature,
     }));
-}
-
-fn has_token_account(
-    solana_adress: &Pubkey,
-    token: &Pubkey,
-    solana_client: &SolanaClient,
-) -> Result<bool, String> {
-    let account = get_associated_token_address(&solana_adress, &token);
-    let account_with_commitment = match solana_client
-        .client
-        .get_account_with_commitment(&account, solana_client.client.commitment())
-    {
-        Ok(acc) => acc,
-        Err(e) => return Err(format!("{:?}", e)),
-    };
-    if let Some(account_data) = account_with_commitment.value {
-        if !(account_data.owner == system_program::id()) {
-            return Ok(true);
-        }
-    }
-    return Ok(false);
 }
 
 #[derive(Deserialize, Debug)]
