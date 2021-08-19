@@ -9,9 +9,9 @@ use solana_sdk::signer::{
 
 #[derive(Debug)]
 pub enum StateError {
-    SolanaMissingAPIUrl(&'static str),
-    SolanaMissingKeypairPath(&'static str),
-    SolanaKeypairLoadError(&'static str),
+    SolanaMissingAPIUrl(String),
+    SolanaMissingKeypairPath(String),
+    SolanaKeypairLoadError(String),
 }
 
 pub struct SolanaClient {
@@ -26,7 +26,7 @@ impl SolanaClient {
             Ok(api_url) => api_url,
             Err(_) => {
                 return Err(StateError::SolanaMissingAPIUrl(
-                    "SPLIFF_SOLANA_API_URL environment variable not set",
+                    "SPLIFF_SOLANA_API_URL environment variable not set".to_string(),
                 ))
             }
         };
@@ -37,17 +37,18 @@ impl SolanaClient {
             Ok(keypair_path) => keypair_path,
             Err(_) => {
                 return Err(StateError::SolanaMissingKeypairPath(
-                    "SPLIFF_SOLANA_KEYPAIR_PATH environment variable not set",
+                    "SPLIFF_SOLANA_KEYPAIR_PATH environment variable not set".to_string(),
                 ))
             }
         };
 
-        let solana_keypair = match read_keypair_file(solana_keypair_path) {
+        let solana_keypair = match read_keypair_file(&solana_keypair_path) {
             Ok(keypair) => keypair,
             Err(_) => {
-                return Err(StateError::SolanaKeypairLoadError(
-                    "Failed to load keypair from path SPLIFF_SOLANA_KEYPAIR_PATH",
-                ));
+                return Err(StateError::SolanaKeypairLoadError(format!(
+                    "Failed to load keypair from path {}",
+                    solana_keypair_path
+                )));
             }
         };
 

@@ -32,9 +32,9 @@ async fn main() {
         .mount(
             "/tokens",
             rocket::routes![
-                token::list_tokens,
-                token::create_token,
-                token::transfer_token,
+                token::list_tokens_handler,
+                token::create_token_handler,
+                token::transfer_token_handler,
             ],
         )
         .register("/", rocket::catchers![not_found])

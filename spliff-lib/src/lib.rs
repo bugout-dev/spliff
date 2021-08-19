@@ -1,4 +1,5 @@
 pub mod account;
+pub mod errors;
 pub mod state;
 pub mod token;
 pub fn hello() -> String {
